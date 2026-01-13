@@ -1,0 +1,784 @@
+name: Android CI
+
+on:
+    push:
+        branches: [ "main" ]
+    pull_request:
+        types: [ opened, synchronize, reopened ]
+        branches: [ "main" ]
+
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+env:
+    JAVA_VERSION: "21"
+    JAVA_DISTRIBUTION: "temurin"
+    GRADLE_OPTS: "-Dorg.gradle.caching=true"
+
+jobs:
+    # =========================================================================
+    # Build Job - Compiles the project and caches artifacts for downstream jobs
+    # =========================================================================
+    build:
+        name: 🏗️ Build
+        runs-on: ubuntu-latest
+        outputs:
+            build-status: ${{ steps.build.outcome }}
+        steps:
+            -   name: 📥 Checkout code
+                uses: actions/checkout@v4
+
+            -   name: ☕ Set up JDK ${{ env.JAVA_VERSION }}
+                uses: actions/setup-java@v4
+                with:
+                    java-version: ${{ env.JAVA_VERSION }}
+                    distribution: ${{ env.JAVA_DISTRIBUTION }}
+
+            -   name: 📦 Setup Gradle
+                uses: gradle/actions/setup-gradle@v4
+                with:
+                    cache-read-only: false
+
+            -   name: 🔑 Grant execute permission for gradlew
+                run: chmod +x gradlew
+
+            -   name: 🏗️ Build Debug APK
+                id: build
+                run: |
+                    echo "::group::Building Debug APK"
+                    ./gradlew assembleDebug --build-cache
+                    echo "::endgroup::"
+                    echo "✅ Build completed successfully!"
+
+            -   name: 📊 Build Summary
+                if: always()
+                run: |
+                    echo "# 🏗️ Build Report" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    
+                    # Status badge
+                    if [ "${{ steps.build.outcome }}" == "success" ]; then
+                        echo "> ✅ **Build completed successfully**" >> $GITHUB_STEP_SUMMARY
+                    else
+                        echo "> ❌ **Build failed**" >> $GITHUB_STEP_SUMMARY
+                    fi
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    
+                    # Build info table
+                    echo "## 📦 Artifacts" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+                    echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+                    
+                    # APK info
+                    APK_FILE=$(find app/build/outputs/apk/debug -name "*.apk" -type f 2>/dev/null | head -1)
+                    if [ -f "$APK_FILE" ]; then
+                        APK_SIZE=$(du -h "$APK_FILE" | cut -f1)
+                        APK_NAME=$(basename "$APK_FILE")
+                        echo "| APK | \`$APK_NAME\` |" >> $GITHUB_STEP_SUMMARY
+                        echo "| Size | **$APK_SIZE** |" >> $GITHUB_STEP_SUMMARY
+                    fi
+                    
+                    echo "| Java | ${{ env.JAVA_VERSION }} (${{ env.JAVA_DISTRIBUTION }}) |" >> $GITHUB_STEP_SUMMARY
+                    echo "| Gradle | $(./gradlew --version 2>/dev/null | grep 'Gradle' | head -1 | awk '{print $2}') |" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    
+                    # Environment
+                    echo "<details>" >> $GITHUB_STEP_SUMMARY
+                    echo "<summary>🔧 Build Environment</summary>" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    echo "| Setting | Value |" >> $GITHUB_STEP_SUMMARY
+                    echo "|---------|-------|" >> $GITHUB_STEP_SUMMARY
+                    echo "| Runner OS | \`ubuntu-latest\` |" >> $GITHUB_STEP_SUMMARY
+                    echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+                    echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+                    echo "| Workflow | \`${{ github.run_number }}\` |" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    echo "</details>"  >> $GITHUB_STEP_SUMMARY
+
+            -   name: 📤 Upload build artifacts
+                uses: actions/upload-artifact@v4
+                with:
+                    name: build-artifacts
+                    path: |
+                        app/build/outputs/apk/debug/
+                    retention-days: 1
+
+    # =========================================================================
+    # Lint Job - Static analysis checks (runs in parallel)
+    # =========================================================================
+    lint:
+        name: 🔍 Lint & Static Analysis
+        runs-on: ubuntu-latest
+        needs: build
+        steps:
+            -   name: 📥 Checkout code
+                uses: actions/checkout@v4
+
+            -   name: ☕ Set up JDK ${{ env.JAVA_VERSION }}
+                uses: actions/setup-java@v4
+                with:
+                    java-version: ${{ env.JAVA_VERSION }}
+                    distribution: ${{ env.JAVA_DISTRIBUTION }}
+
+            -   name: 📦 Setup Gradle
+                uses: gradle/actions/setup-gradle@v4
+                with:
+                    cache-read-only: true
+
+            -   name: 🔑 Grant execute permission for gradlew
+                run: chmod +x gradlew
+
+            -   name: 🔎 Run Detekt
+                id: detekt
+                run: |
+                    echo "::group::Running Detekt Analysis"
+                    ./gradlew detekt --build-cache
+                    echo "::endgroup::"
+                    echo "✅ Detekt passed!"
+
+            -   name: 📝 Run KtLint
+                id: ktlint
+                run: |
+                    echo "::group::Running KtLint Check"
+                    ./gradlew ktlintCheck --build-cache
+                    echo "::endgroup::"
+                    echo "✅ KtLint passed!"
+
+            -   name: 📱 Run Android Lint
+                id: lint
+                run: |
+                    echo "::group::Running Android Lint"
+                    ./gradlew lintDebug --build-cache
+                    echo "::endgroup::"
+                    echo "✅ Android Lint passed!"
+
+            -   name: 📊 Lint Summary
+                if: always()
+                run: |
+                    echo "# 🔍 Static Analysis Report" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    
+                    # Overall status
+                    DETEKT_STATUS="${{ steps.detekt.outcome }}"
+                    KTLINT_STATUS="${{ steps.ktlint.outcome }}"
+                    LINT_STATUS="${{ steps.lint.outcome }}"
+                    
+                    if [ "$DETEKT_STATUS" == "success" ] && [ "$KTLINT_STATUS" == "success" ] && [ "$LINT_STATUS" == "success" ]; then
+                        echo "> ✅ **All static analysis checks passed**" >> $GITHUB_STEP_SUMMARY
+                    else
+                        echo "> ⚠️ **Some checks failed - review required**" >> $GITHUB_STEP_SUMMARY
+                    fi
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    
+                    # Results table
+                    echo "## 📋 Results" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    echo "| Tool | Status | Description |" >> $GITHUB_STEP_SUMMARY
+                    echo "|------|--------|-------------|" >> $GITHUB_STEP_SUMMARY
+                    echo "| 🔎 Detekt | ${{ steps.detekt.outcome == 'success' && '✅ Passed' || '❌ Failed' }} | Code smell detection |" >> $GITHUB_STEP_SUMMARY
+                    echo "| 📝 KtLint | ${{ steps.ktlint.outcome == 'success' && '✅ Passed' || '❌ Failed' }} | Kotlin code style |" >> $GITHUB_STEP_SUMMARY
+                    echo "| 📱 Android Lint | ${{ steps.lint.outcome == 'success' && '✅ Passed' || '❌ Failed' }} | Android best practices |" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    
+                    # Issue Statistics
+                    echo "<details>" >> $GITHUB_STEP_SUMMARY
+                    echo "<summary>📊 Issue Statistics</summary>" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    
+                    DETEKT_REPORT=$(find . -path "*/build/reports/detekt/detekt.xml" -type f 2>/dev/null | head -1)
+                    if [ -f "$DETEKT_REPORT" ]; then
+                        DETEKT_ISSUES=$(grep -c '<error' "$DETEKT_REPORT" 2>/dev/null || echo 0)
+                        echo "- **Detekt**: $DETEKT_ISSUES issue(s)" >> $GITHUB_STEP_SUMMARY
+                    fi
+                    
+                    # Android Lint issues
+                    LINT_REPORT=$(find . -path "*/build/reports/lint-results-debug.xml" -type f 2>/dev/null | head -1)
+                    if [ -f "$LINT_REPORT" ]; then
+                        LINT_ERRORS=$(grep -c 'severity="Error"' "$LINT_REPORT" 2>/dev/null || echo 0)
+                        LINT_WARNINGS=$(grep -c 'severity="Warning"' "$LINT_REPORT" 2>/dev/null || echo 0)
+                        echo "- **Android Lint**: $LINT_ERRORS error(s), $LINT_WARNINGS warning(s)" >> $GITHUB_STEP_SUMMARY
+                    fi
+                    
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    echo "</details>" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    
+                    # HTML Reports section with links
+                    echo "## 📄 HTML Reports" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    echo "Download the **lint-reports** artifact to view detailed HTML reports:" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    echo "| Report | Path in Artifact |" >> $GITHUB_STEP_SUMMARY
+                    echo "|--------|------------------|" >> $GITHUB_STEP_SUMMARY
+                    echo "| 🔎 Detekt | \`build/reports/detekt/detekt.html\` |" >> $GITHUB_STEP_SUMMARY
+                    echo "| 📝 KtLint | \`app/build/reports/ktlint/ktlintMainSourceSetCheck.html\` |" >> $GITHUB_STEP_SUMMARY
+                    echo "| 📱 Android Lint | \`app/build/reports/lint-results-debug.html\` |" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    
+                    echo "> 💡 **Tip**: Extract the artifact and open the HTML files in your browser for detailed analysis." >> $GITHUB_STEP_SUMMARY
+
+            -   name: 📤 Upload Lint Reports
+                if: always()
+                uses: actions/upload-artifact@v4
+                with:
+                    name: lint-reports
+                    path: |
+                        **/build/reports/detekt/
+                        **/build/reports/ktlint/
+                        **/build/reports/lint-results-*.html
+                        **/build/reports/lint-results-*.xml
+                    retention-days: 7
+
+    # =========================================================================
+    # Unit Test Job - Runs unit tests with coverage
+    # =========================================================================
+    test:
+        name: 🧪 Unit Tests & Instrumentation Tests
+        runs-on: ubuntu-latest
+        needs: build
+        steps:
+            -   name: 📥 Checkout code
+                uses: actions/checkout@v4
+
+            -   name: ☕ Set up JDK ${{ env.JAVA_VERSION }}
+                uses: actions/setup-java@v4
+                with:
+                    java-version: ${{ env.JAVA_VERSION }}
+                    distribution: ${{ env.JAVA_DISTRIBUTION }}
+
+            -   name: Setup Android SDK
+                uses: android-actions/setup-android@v3  # Accept automatically licences [page:2]
+                with:
+                    cache-read-only: true
+
+            -   name: Accept licenses (fallback)
+                run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
+
+            -   name: 🔧 Enable KVM acceleration
+                run: |
+                    echo "Enabling KVM for faster emulator..."
+                    echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+                    sudo udevadm control --reload-rules
+                    sudo udevadm trigger --name-match=kvm
+                    echo "✅ KVM enabled!"
+
+            -   name: 📦 Setup Gradle
+                uses: gradle/actions/setup-gradle@v4
+                with:
+                    cache-read-only: true
+
+            -   name: 🔑 Grant execute permission for gradlew
+                run: chmod +x gradlew
+
+            -   name: 🧪 Run Unit Tests with Coverage
+                id: unit-tests
+                run: |
+                    echo "::group::Running Unit Tests And Instrumentation Tests"
+                    ./gradlew jacocoTestReport --build-cache
+                    echo "::endgroup::"
+                    echo "✅ All unit tests and all instrumentation tests passed!"
+
+            -   name: 📊 Parse and Display Test Summary
+                if: always()
+                run: |
+                    echo "# 🧪 Test & Coverage Report" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+
+                    # Count test results from XML files
+                    TOTAL_TESTS=0
+                    PASSED_TESTS=0
+                    FAILED_TESTS=0
+                    SKIPPED_TESTS=0
+
+                    for xml in $(find . -path "*/build/test-results/*/TEST-*.xml" -type f 2>/dev/null); do
+                      tests=$(grep -o 'tests="[0-9]*"' "$xml" | head -1 | grep -o '[0-9]*' || echo 0)
+                      failures=$(grep -o 'failures="[0-9]*"' "$xml" | head -1 | grep -o '[0-9]*' || echo 0)
+                      errors=$(grep -o 'errors="[0-9]*"' "$xml" | head -1 | grep -o '[0-9]*' || echo 0)
+                      skipped=$(grep -o 'skipped="[0-9]*"' "$xml" | head -1 | grep -o '[0-9]*' || echo 0)
+
+                      TOTAL_TESTS=$((TOTAL_TESTS + tests))
+                      FAILED_TESTS=$((FAILED_TESTS + failures + errors))
+                      SKIPPED_TESTS=$((SKIPPED_TESTS + skipped))
+                    done
+                    PASSED_TESTS=$((TOTAL_TESTS - FAILED_TESTS - SKIPPED_TESTS))
+
+                    # Overall status
+                    if [ "$FAILED_TESTS" -eq 0 ]; then
+                        echo "> ✅ **All $TOTAL_TESTS tests passed**" >> $GITHUB_STEP_SUMMARY
+                    else
+                        echo "> ❌ **$FAILED_TESTS of $TOTAL_TESTS tests failed**" >> $GITHUB_STEP_SUMMARY
+                    fi
+                    echo "" >> $GITHUB_STEP_SUMMARY
+
+                    # Visual progress bar
+                    if [ "$TOTAL_TESTS" -gt 0 ]; then
+                        PASS_PCT=$((PASSED_TESTS * 100 / TOTAL_TESTS))
+                        FILLED=$((PASS_PCT / 5))
+                        EMPTY=$((20 - FILLED))
+                        BAR=$(printf '█%.0s' $(seq 1 $FILLED 2>/dev/null) || echo "")$(printf '░%.0s' $(seq 1 $EMPTY 2>/dev/null) || echo "")
+                        echo "**Test Success Rate:** $BAR **$PASS_PCT%**" >> $GITHUB_STEP_SUMMARY
+                        echo "" >> $GITHUB_STEP_SUMMARY
+                    fi
+
+                    # Test results table
+                    echo "## 📋 Test Results" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    echo "| Status | Count | Percentage |" >> $GITHUB_STEP_SUMMARY
+                    echo "|--------|-------|------------|" >> $GITHUB_STEP_SUMMARY
+                    
+                    if [ "$TOTAL_TESTS" -gt 0 ]; then
+                        PASS_PCT=$((PASSED_TESTS * 100 / TOTAL_TESTS))
+                        FAIL_PCT=$((FAILED_TESTS * 100 / TOTAL_TESTS))
+                        SKIP_PCT=$((SKIPPED_TESTS * 100 / TOTAL_TESTS))
+                        echo "| ✅ Passed | **$PASSED_TESTS** | $PASS_PCT% |" >> $GITHUB_STEP_SUMMARY
+                        echo "| ❌ Failed | $FAILED_TESTS | $FAIL_PCT% |" >> $GITHUB_STEP_SUMMARY
+                        echo "| ⏭️ Skipped | $SKIPPED_TESTS | $SKIP_PCT% |" >> $GITHUB_STEP_SUMMARY
+                    else
+                        echo "| ⚪ No tests | 0 | - |" >> $GITHUB_STEP_SUMMARY
+                    fi
+                    echo "" >> $GITHUB_STEP_SUMMARY
+
+                    # Show failed tests if any
+                    if [ "$FAILED_TESTS" -gt 0 ]; then
+                        echo "## ❌ Failed Tests" >> $GITHUB_STEP_SUMMARY
+                        echo "" >> $GITHUB_STEP_SUMMARY
+                        echo "| Test Class | Module |" >> $GITHUB_STEP_SUMMARY
+                        echo "|------------|--------|" >> $GITHUB_STEP_SUMMARY
+                        for xml in $(find . -path "*/build/test-results/*/TEST-*.xml" -type f 2>/dev/null); do
+                            if grep -q 'failures="[1-9]' "$xml" 2>/dev/null || grep -q 'errors="[1-9]' "$xml" 2>/dev/null; then
+                                MODULE=$(echo "$xml" | sed 's|^\./||' | cut -d/ -f1)
+                                CLASS=$(grep -oP 'classname="\K[^"]+' "$xml" | head -1)
+                                if [ -n "$CLASS" ]; then
+                                    echo "| \`${CLASS##*.}\` | \`$MODULE\` |" >> $GITHUB_STEP_SUMMARY
+                                fi
+                            fi
+                        done | head -10
+                        echo "" >> $GITHUB_STEP_SUMMARY
+                    fi
+
+                    # Parse JaCoCo coverage
+                    echo "## 📊 Code Coverage" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+
+                    JACOCO_FILE=$(find . -path "./build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml" -type f 2>/dev/null | head -1)
+                    if [ -f "$JACOCO_FILE" ]; then
+                        # Extract line coverage
+                        COVERED=$(grep -oP 'type="LINE"[^/]*covered="\K[0-9]+' "$JACOCO_FILE" | tail -1 || echo 0)
+                        MISSED=$(grep -oP 'type="LINE"[^/]*missed="\K[0-9]+' "$JACOCO_FILE" | tail -1 || echo 0)
+                        TOTAL_LINES=$((COVERED + MISSED))
+                        if [ "$TOTAL_LINES" -gt 0 ]; then
+                          LINE_PCT=$((COVERED * 100 / TOTAL_LINES))
+                        else
+                          LINE_PCT=0
+                        fi
+
+                        # Extract branch coverage
+                        BR_COVERED=$(grep -oP 'type="BRANCH"[^/]*covered="\K[0-9]+' "$JACOCO_FILE" | tail -1 || echo 0)
+                        BR_MISSED=$(grep -oP 'type="BRANCH"[^/]*missed="\K[0-9]+' "$JACOCO_FILE" | tail -1 || echo 0)
+                        BR_TOTAL=$((BR_COVERED + BR_MISSED))
+                        if [ "$BR_TOTAL" -gt 0 ]; then
+                          BRANCH_PCT=$((BR_COVERED * 100 / BR_TOTAL))
+                        else
+                          BRANCH_PCT=0
+                        fi
+
+                        # Visual progress bar for coverage
+                        FILLED=$((LINE_PCT / 5))
+                        EMPTY=$((20 - FILLED))
+                        if [ "$LINE_PCT" -ge 80 ]; then
+                          COLOR="🟢"
+                        elif [ "$LINE_PCT" -ge 50 ]; then
+                          COLOR="🟡"
+                        else
+                          COLOR="🔴"
+                        fi
+                        
+                        BAR=$(printf '█%.0s' $(seq 1 $FILLED 2>/dev/null) || echo "")$(printf '░%.0s' $(seq 1 $EMPTY 2>/dev/null) || echo "")
+                        echo "**Line Coverage:** $BAR **$LINE_PCT%** $COLOR" >> $GITHUB_STEP_SUMMARY
+                        echo "" >> $GITHUB_STEP_SUMMARY
+
+                        echo "| Metric | Covered | Missed | Total | Percentage |" >> $GITHUB_STEP_SUMMARY
+                        echo "|--------|---------|--------|-------|------------|" >> $GITHUB_STEP_SUMMARY
+                        echo "| 📝 Lines | $COVERED | $MISSED | $TOTAL_LINES | **$LINE_PCT%** |" >> $GITHUB_STEP_SUMMARY
+                        echo "| 🌿 Branches | $BR_COVERED | $BR_MISSED | $BR_TOTAL | **$BRANCH_PCT%** |" >> $GITHUB_STEP_SUMMARY
+                    else
+                        echo "> ⚪ Coverage report not available" >> $GITHUB_STEP_SUMMARY
+                    fi
+                    echo "" >> $GITHUB_STEP_SUMMARY
+
+                    # Show classes with low coverage (< 50%)
+                    echo "<details>" >> $GITHUB_STEP_SUMMARY
+                    echo "<summary>📋 Classes Needing Tests (< 50% coverage)</summary>" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    echo "| Class | Coverage |" >> $GITHUB_STEP_SUMMARY
+                    echo "|-------|----------|" >> $GITHUB_STEP_SUMMARY
+
+                    for xml in $(find . -path "*/build/reports/jacoco/*/*.xml" -type f 2>/dev/null); do
+                      grep -oP '<class name="[^"]+[^>]+>' "$xml" 2>/dev/null | while read class_line; do
+                        class_name=$(echo "$class_line" | grep -oP 'name="\K[^"]+' | sed 's/\//./g')
+                        covered=$(echo "$class_line" | grep -oP 'covered="\K[0-9]+' | head -1 || echo 0)
+                        missed=$(echo "$class_line" | grep -oP 'missed="\K[0-9]+' | head -1 || echo 0)
+                        total=$((covered + missed))
+                        if [ "$total" -gt 0 ]; then
+                          pct=$((covered * 100 / total))
+                          if [ "$pct" -lt 50 ]; then
+                            echo "| \`${class_name##*.}\` | 🔴 $pct% |"
+                          fi
+                        fi
+                      done
+                    done | head -10 >> $GITHUB_STEP_SUMMARY
+
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    echo "</details>" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    
+                    echo "> 💡 Download the **test-reports** artifact for detailed HTML reports." >> $GITHUB_STEP_SUMMARY
+
+            -   name: 📤 Upload Test Reports
+                if: always()
+                uses: actions/upload-artifact@v4
+                with:
+                    name: test-reports
+                    path: |
+                        **/build/reports/tests/
+                        **/build/reports/androidTests/
+                        **/build/reports/jacoco/
+                        **/build/test-results/
+                    retention-days: 7
+
+            -   name: 📊 Publish Coverage Report
+                if: github.event_name == 'pull_request'
+                uses: madrapps/jacoco-report@50d3aff4548aa991e6753342d9ba291084e63848 # v1.7.2
+                with:
+                    paths: ${{ github.workspace }}/build/reports/jacoco/jacocoTestReport/jacocoTestReport.xml
+                    token: ${{ secrets.GITHUB_TOKEN }}
+                    min-coverage-overall: 80
+                    min-coverage-changed-files: 60
+                    title: "📊 Code Coverage Report"
+
+    # =========================================================================
+    # Screenshot Test Job - Visual regression testing with Roborazzi
+    # =========================================================================
+    screenshot:
+        name: 📸 Screenshot Tests
+        runs-on: ubuntu-latest
+        needs: build
+        steps:
+            -   name: 📥 Checkout code
+                uses: actions/checkout@v4
+
+            -   name: ☕ Set up JDK ${{ env.JAVA_VERSION }}
+                uses: actions/setup-java@v4
+                with:
+                    java-version: ${{ env.JAVA_VERSION }}
+                    distribution: ${{ env.JAVA_DISTRIBUTION }}
+
+            -   name: 📦 Setup Gradle
+                uses: gradle/actions/setup-gradle@v4
+                with:
+                    cache-read-only: true
+
+            -   name: 🔑 Grant execute permission for gradlew
+                run: chmod +x gradlew
+
+            -   name: 📸 Verify Screenshots (Roborazzi)
+                id: screenshots
+                continue-on-error: true
+                run: |
+                    echo "::group::Verifying Screenshots"
+                    ./gradlew verifyRoborazziDebug --build-cache
+                    echo "::endgroup::"
+                    echo "✅ All screenshots match!"
+
+            -   name: 📊 Generate Screenshot Report
+                if: always()
+                run: |
+                    echo "# 📸 Screenshot Test Report" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+
+                    # Count screenshots
+                    SNAPSHOT_DIR="snapshots/roborazzi"
+                    TOTAL_SCREENSHOTS=0
+                    if [ -d "$SNAPSHOT_DIR" ]; then
+                        TOTAL_SCREENSHOTS=$(find "$SNAPSHOT_DIR" -name "*.png" -type f 2>/dev/null | wc -l | tr -d ' ')
+                    fi
+
+                    # Count diff images (only present on failure)
+                    DIFF_COUNT=0
+                    DIFF_DIR="app/build/outputs/roborazzi"
+                    if [ -d "$DIFF_DIR" ]; then
+                        DIFF_COUNT=$(find "$DIFF_DIR" -name "*_compare.png" -type f 2>/dev/null | wc -l | tr -d ' ')
+                    fi
+
+                    # Overall status
+                    if [ "${{ steps.screenshots.outcome }}" == "success" ]; then
+                        echo "> ✅ **All $TOTAL_SCREENSHOTS screenshots match reference images**" >> $GITHUB_STEP_SUMMARY
+                    else
+                        echo "> ⚠️ **$DIFF_COUNT visual difference(s) detected**" >> $GITHUB_STEP_SUMMARY
+                    fi
+                    echo "" >> $GITHUB_STEP_SUMMARY
+
+                    # Summary table
+                    echo "## 📋 Summary" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+                    echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+                    echo "| Status | ${{ steps.screenshots.outcome == 'success' && '✅ Passed' || '❌ Failed' }} |" >> $GITHUB_STEP_SUMMARY
+                    echo "| Total Screenshots | $TOTAL_SCREENSHOTS |" >> $GITHUB_STEP_SUMMARY
+                    if [ "$DIFF_COUNT" -gt 0 ]; then
+                        echo "| 🔴 Differences | **$DIFF_COUNT** |" >> $GITHUB_STEP_SUMMARY
+                    fi
+                    echo "" >> $GITHUB_STEP_SUMMARY
+
+                    # If there are differences, show comparison images
+                    if [ "$DIFF_COUNT" -gt 0 ] && [ -d "$DIFF_DIR" ]; then
+                        echo "## 🔄 Visual Differences" >> $GITHUB_STEP_SUMMARY
+                        echo "" >> $GITHUB_STEP_SUMMARY
+                        echo "The following screenshots have visual differences:" >> $GITHUB_STEP_SUMMARY
+                        echo "" >> $GITHUB_STEP_SUMMARY
+                        
+                        # Create a directory for comparison images to be uploaded
+                        mkdir -p comparison-images
+                        
+                        # Display each comparison image
+                        COUNTER=0
+                        find "$DIFF_DIR" -name "*_compare.png" -type f 2>/dev/null | head -10 | while read f; do
+                            COUNTER=$((COUNTER + 1))
+                            name=$(basename "$f" | sed 's/_compare\.png$//')
+                            
+                            # Copy to comparison-images directory
+                            cp "$f" "comparison-images/"
+                            
+                            # Also copy actual and expected if they exist
+                            actual_file="$DIFF_DIR/${name}_actual.png"
+                            expected_file="$SNAPSHOT_DIR/${name}.png"
+                            
+                            echo "### $COUNTER. \`$name\`" >> $GITHUB_STEP_SUMMARY
+                            echo "" >> $GITHUB_STEP_SUMMARY
+                            echo "<details open>" >> $GITHUB_STEP_SUMMARY
+                            echo "<summary>� View Comparison</summary>" >> $GITHUB_STEP_SUMMARY
+                            echo "" >> $GITHUB_STEP_SUMMARY
+                            echo "| Expected (Reference) | Actual (Current) |" >> $GITHUB_STEP_SUMMARY
+                            echo "|----------------------|------------------|" >> $GITHUB_STEP_SUMMARY
+                            echo "| 📸 See \`$name.png\` in artifact | 📸 See \`${name}_actual.png\` in artifact |" >> $GITHUB_STEP_SUMMARY
+                            echo "" >> $GITHUB_STEP_SUMMARY
+                            echo "**Comparison view:** Download \`screenshot-report\` artifact and open \`${name}_compare.png\`" >> $GITHUB_STEP_SUMMARY
+                            echo "" >> $GITHUB_STEP_SUMMARY
+                            echo "</details>" >> $GITHUB_STEP_SUMMARY
+                            echo "" >> $GITHUB_STEP_SUMMARY
+                        done
+                        
+                        if [ "$DIFF_COUNT" -gt 10 ]; then
+                            echo "> 📌 Showing first 10 of $DIFF_COUNT differences. Download artifact for all." >> $GITHUB_STEP_SUMMARY
+                            echo "" >> $GITHUB_STEP_SUMMARY
+                        fi
+                        
+                        echo "> 💡 **How to review:**" >> $GITHUB_STEP_SUMMARY
+                        echo "> 1. Download the \`screenshot-report\` artifact" >> $GITHUB_STEP_SUMMARY
+                        echo "> 2. Open \`index.html\` in your browser" >> $GITHUB_STEP_SUMMARY
+                        echo "> 3. Compare the expected vs actual images" >> $GITHUB_STEP_SUMMARY
+                        echo "> 4. If changes are intentional, run \`./gradlew recordRoborazziDebug\` locally" >> $GITHUB_STEP_SUMMARY
+                    fi
+
+                    # Show reference screenshots list (collapsed)
+                    if [ "$TOTAL_SCREENSHOTS" -gt 0 ]; then
+                        echo "" >> $GITHUB_STEP_SUMMARY
+                        echo "<details>" >> $GITHUB_STEP_SUMMARY
+                        echo "<summary>� All Reference Screenshots ($TOTAL_SCREENSHOTS files)</summary>" >> $GITHUB_STEP_SUMMARY
+                        echo "" >> $GITHUB_STEP_SUMMARY
+                        echo "| # | Screenshot Name |" >> $GITHUB_STEP_SUMMARY
+                        echo "|---|-----------------|" >> $GITHUB_STEP_SUMMARY
+                        COUNT=0
+                        find "$SNAPSHOT_DIR" -name "*.png" -type f 2>/dev/null | sort | while read f; do
+                            COUNT=$((COUNT + 1))
+                            name=$(basename "$f" .png)
+                            echo "| $COUNT | \`$name\` |" >> $GITHUB_STEP_SUMMARY
+                        done
+                        echo "" >> $GITHUB_STEP_SUMMARY
+                        echo "</details>" >> $GITHUB_STEP_SUMMARY
+                    fi
+
+            -   name: 📁 Generate HTML Gallery
+                if: always()
+                run: |
+                    mkdir -p screenshot-report
+
+                    # Create HTML gallery
+                    cat > screenshot-report/index.html << 'EOF'
+                    <!DOCTYPE html>
+                    <html lang="en">
+                    <head>
+                        <meta charset="UTF-8">
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                        <title>📸 Roborazzi Screenshot Report</title>
+                        <style>
+                            * { box-sizing: border-box; margin: 0; padding: 0; }
+                            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; }
+                            h1 { text-align: center; margin-bottom: 30px; color: #58a6ff; }
+                            h2 { color: #8b949e; margin: 30px 0 15px; border-bottom: 1px solid #30363d; padding-bottom: 10px; }
+                            .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+                            .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; overflow: hidden; transition: transform 0.2s; }
+                            .card:hover { transform: translateY(-4px); border-color: #58a6ff; }
+                            .card img { width: 100%; height: auto; display: block; background: #21262d; }
+                            .card .name { padding: 12px; font-size: 14px; color: #c9d1d9; word-break: break-all; }
+                            .diff-card { border-color: #f85149; }
+                            .diff-card .name { color: #f85149; }
+                            .summary { background: #161b22; padding: 20px; border-radius: 8px; margin-bottom: 30px; border: 1px solid #30363d; }
+                            .summary p { margin: 5px 0; }
+                            .success { color: #3fb950; }
+                            .warning { color: #d29922; }
+                            .error { color: #f85149; }
+                        </style>
+                    </head>
+                    <body>
+                        <h1>📸 Roborazzi Screenshot Report</h1>
+                        <div class="summary">
+                            <p><strong>Build:</strong> ${{ github.run_number }}</p>
+                            <p><strong>Branch:</strong> ${{ github.ref_name }}</p>
+                            <p><strong>Commit:</strong> ${{ github.sha }}</p>
+                        </div>
+                    EOF
+
+                    # Add reference screenshots
+                    SNAPSHOT_DIR="snapshots/roborazzi"
+                    if [ -d "$SNAPSHOT_DIR" ]; then
+                        echo '<h2>📚 Reference Screenshots</h2>' >> screenshot-report/index.html
+                        echo '<div class="gallery">' >> screenshot-report/index.html
+                        find "$SNAPSHOT_DIR" -name "*.png" -type f | sort | while read img; do
+                            name=$(basename "$img" .png)
+                            cp "$img" "screenshot-report/"
+                            echo "<div class='card'><img src='$(basename "$img")' alt='$name' loading='lazy'/><div class='name'>$name</div></div>" >> screenshot-report/index.html
+                        done
+                        echo '</div>' >> screenshot-report/index.html
+                    fi
+
+                    # Add diff screenshots if present
+                    DIFF_DIR="app/build/outputs/roborazzi"
+                    if [ -d "$DIFF_DIR" ] && [ "$(find "$DIFF_DIR" -name "*_compare.png" -type f 2>/dev/null | wc -l)" -gt 0 ]; then
+                        echo '<h2>⚠️ Visual Differences</h2>' >> screenshot-report/index.html
+                        echo '<div class="gallery">' >> screenshot-report/index.html
+                        find "$DIFF_DIR" -name "*_compare.png" -type f | sort | while read img; do
+                            name=$(basename "$img" .png)
+                            cp "$img" "screenshot-report/"
+                            echo "<div class='card diff-card'><img src='$(basename "$img")' alt='$name' loading='lazy'/><div class='name'>$name</div></div>" >> screenshot-report/index.html
+                        done
+                        echo '</div>' >> screenshot-report/index.html
+                    fi
+
+                    echo '</body></html>' >> screenshot-report/index.html
+
+            -   name: 📤 Upload Screenshot Report
+                if: always()
+                uses: actions/upload-artifact@v4
+                with:
+                    name: screenshot-report
+                    path: |
+                        screenshot-report/
+                        snapshots/roborazzi/
+                    retention-days: 14
+
+            -   name: ❌ Fail if screenshots differ
+                if: steps.screenshots.outcome == 'failure'
+                run: exit 1
+
+    # =========================================================================
+    # SonarCloud Analysis Job
+    # =========================================================================
+    sonar:
+        name: 🔎 SonarCloud Analysis
+        runs-on: ubuntu-latest
+        needs: [ lint, test ]
+        if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        steps:
+            -   name: 📥 Checkout code
+                uses: actions/checkout@v4
+                with:
+                    fetch-depth: 0
+
+            -   name: ☕ Set up JDK ${{ env.JAVA_VERSION }}
+                uses: actions/setup-java@v4
+                with:
+                    java-version: ${{ env.JAVA_VERSION }}
+                    distribution: ${{ env.JAVA_DISTRIBUTION }}
+                    cache: gradle
+
+            -   name: 📦 Setup Gradle
+                uses: gradle/actions/setup-gradle@v4
+                with:
+                    cache-read-only: true
+
+            -   name: 🔑 Grant execute permission for gradlew
+                run: chmod +x gradlew
+
+            -   name: 📥 Download Test Reports
+                uses: actions/download-artifact@v4
+                with:
+                    name: test-reports
+                    path: .
+
+            -   name: 📥 Download Lint Reports
+                uses: actions/download-artifact@v4
+                with:
+                    name: lint-reports
+                    path: .
+
+            -   name: 🔎 Run SonarCloud Analysis
+                id: sonar
+                env:
+                    GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                    SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+                    SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
+                    SONAR_ORGANIZATION_KEY: ${{ secrets.SONAR_ORGANIZATION_KEY }}
+                run: |
+                    echo "::group::Running SonarCloud Analysis"
+                    ./gradlew assembleDebug sonar --info --build-cache
+                    echo "::endgroup::"
+                    echo "✅ SonarCloud analysis complete!"
+                continue-on-error: true
+
+            -   name: 📊 SonarCloud Summary
+                if: always()
+                run: |
+                    echo "# 🔎 SonarCloud Analysis Report" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    
+                    # Status
+                    if [ "${{ steps.sonar.outcome }}" == "success" ]; then
+                        echo "> ✅ **Analysis completed successfully**" >> $GITHUB_STEP_SUMMARY
+                    else
+                        echo "> ⚠️ **Analysis skipped or failed**" >> $GITHUB_STEP_SUMMARY
+                    fi
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    
+                    # Analysis details
+                    echo "## 📋 Analysis Details" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+                    echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+                    echo "| Status | ${{ steps.sonar.outcome == 'success' && '✅ Completed' || '⚠️ Incomplete' }} |" >> $GITHUB_STEP_SUMMARY
+                    echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
+                    echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    
+                    # Reports included
+                    echo "## 📁 Reports Included" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    echo "| Report Type | Source |" >> $GITHUB_STEP_SUMMARY
+                    echo "|-------------|--------|" >> $GITHUB_STEP_SUMMARY
+                    echo "| 📊 Coverage | JaCoCo merged report |" >> $GITHUB_STEP_SUMMARY
+                    echo "| 🔎 Code Smells | Detekt |" >> $GITHUB_STEP_SUMMARY
+                    echo "| 📝 Style | KtLint |" >> $GITHUB_STEP_SUMMARY
+                    echo "| 📱 Android | Android Lint |" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    
+                    # Quick links
+                    echo "## 🔗 Quick Links" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    echo "| Link | Description |" >> $GITHUB_STEP_SUMMARY
+                    echo "|------|-------------|" >> $GITHUB_STEP_SUMMARY
+                    echo "| [📊 Dashboard](https://sonarcloud.io/dashboard?id=${{ secrets.SONAR_PROJECT_KEY }}) | Project overview |" >> $GITHUB_STEP_SUMMARY
+                    echo "| [🐛 Issues](https://sonarcloud.io/project/issues?id=${{ secrets.SONAR_PROJECT_KEY }}) | All issues |" >> $GITHUB_STEP_SUMMARY
+                    echo "| [🔒 Security](https://sonarcloud.io/project/security_hotspots?id=${{ secrets.SONAR_PROJECT_KEY }}) | Security hotspots |" >> $GITHUB_STEP_SUMMARY
+                    echo "| [📈 Coverage](https://sonarcloud.io/component_measures?id=${{ secrets.SONAR_PROJECT_KEY }}&metric=coverage) | Coverage details |" >> $GITHUB_STEP_SUMMARY

@@ -1,0 +1,20 @@
+#!/bin/sh
+# Pre-push hook to enforce Conventional Branch Names
+
+# Get current branch name
+BRANCH_NAME=$(git symbolic-ref --short HEAD)
+
+# Regex for branch naming convention
+# feature/name, bugfix/name, hotfix/name, release/name, support/name, main, develop
+MATCH_REGEX="^((feature|bugfix|hotfix|release|support)\/[a-z0-9-]+)|(main|develop)$"
+
+if ! echo "$BRANCH_NAME" | grep -qE "$MATCH_REGEX"; then
+    echo "❌ Invalid branch name: $BRANCH_NAME"
+    echo "Please use standard branch naming convention:"
+    echo "  feature/name, bugfix/name, hotfix/name, release/name, support/name"
+    echo "  or main, develop"
+    exit 1
+fi
+
+echo "✅ Branch name follows convention."
+exit 0

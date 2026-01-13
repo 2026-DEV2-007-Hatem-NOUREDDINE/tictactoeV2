@@ -1,16 +1,13 @@
 pluginManagement {
     repositories {
-        google {
-            content {
-                includeGroupByRegex("com\\.android.*")
-                includeGroupByRegex("com\\.google.*")
-                includeGroupByRegex("androidx.*")
-            }
-        }
+        google()
         mavenCentral()
         gradlePluginPortal()
     }
 }
+
+includeBuild("build-logic")
+
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
@@ -19,6 +16,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "Tic Tac Toe"
-include(":app")
- 
+rootProject.name = "TicTacToe"
+include(":app", ":domain", ":data")

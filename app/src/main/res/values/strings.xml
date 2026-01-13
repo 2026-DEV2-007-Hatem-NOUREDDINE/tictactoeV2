@@ -1,3 +1,17 @@
 <resources>
-    <string name="app_name">Tic Tac Toe</string>
+    <string name="app_name">TicTacToe</string>
+    <string name="winner_message">Winner: %1$s</string>
+    <string name="winning_player">Winner:</string>
+    <string name="draw_message">Draw!</string>
+    <string name="current_player_label">Current Player:</string>
+    <string name="current_player">%1$s</string>
+    <string name="restart_game">Restart Game</string>
+    
+    <string name="error_game_over">Game is over</string>
+    <string name="error_unknown">Unknown error</string>
+
+    <string name="cd_cell_empty">Empty cell at row %1$d, column %2$d</string>
+    <string name="cd_cell_filled">Cell at row %1$d, column %2$d filled by %3$s</string>
+    <string name="cd_player_x">Player X</string>
+    <string name="cd_player_o">Player O</string>
 </resources>
