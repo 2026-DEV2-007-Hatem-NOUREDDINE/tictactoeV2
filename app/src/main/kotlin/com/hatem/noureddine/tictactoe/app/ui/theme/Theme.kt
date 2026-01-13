@@ -1,5 +1,6 @@
-package com.hatem.noureddine.tictactoe.ui.theme
+package com.hatem.noureddine.tictactoe.app.ui.theme
 
+import android.app.Activity
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
@@ -8,31 +9,35 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
+import androidx.core.view.WindowCompat
 
-private val DarkColorScheme =
+private val darkColorScheme =
     darkColorScheme(
         primary = Purple80,
         secondary = PurpleGrey80,
         tertiary = Pink80,
     )
 
-private val LightColorScheme =
+private val lightColorScheme =
     lightColorScheme(
         primary = Purple40,
         secondary = PurpleGrey40,
         tertiary = Pink40,
-        /* Other default colors to override
-        background = Color(0xFFFFFBFE),
-        surface = Color(0xFFFFFBFE),
-        onPrimary = Color.White,
-        onSecondary = Color.White,
-        onTertiary = Color.White,
-        onBackground = Color(0xFF1C1B1F),
-        onSurface = Color(0xFF1C1B1F),
-         */
     )
 
+/**
+ * Material Theme wrapper for the Tic Tac Toe application.
+ *
+ * Configures the color scheme, typography, and status bar appearance based on system settings.
+ * Supports dynamic colors on Android 12+ and handles edge-to-edge status bar contrast.
+ *
+ * @param darkTheme Whether to use the dark theme (defaults to system setting).
+ * @param dynamicColor Whether to use dynamic colors (Android 12+).
+ * @param content The composable content to be themed.
+ */
 @Composable
 fun TicTacToeTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
@@ -48,13 +53,20 @@ fun TicTacToeTheme(
             }
 
             darkTheme -> {
-                DarkColorScheme
+                darkColorScheme
             }
 
             else -> {
-                LightColorScheme
+                lightColorScheme
             }
         }
+    val view = LocalView.current
+    if (!view.isInEditMode) {
+        SideEffect {
+            val window = (view.context as Activity).window
+            WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars = !darkTheme
+        }
+    }
 
     MaterialTheme(
         colorScheme = colorScheme,

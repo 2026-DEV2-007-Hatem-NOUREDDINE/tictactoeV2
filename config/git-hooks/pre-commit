@@ -1,0 +1,46 @@
+#!/bin/sh
+# Pre-commit hook to run KtLint, Detekt, and Unit Tests
+
+echo "🚀 Running Pre-commit checks..."
+
+# 1. KTLINT FORMAT
+echo "🎨 Running KtLint Format..."
+# Get list of staged Kotlin files
+STAGED_KOTLIN_FILES=$(git diff --name-only --cached --diff-filter=ACMR | grep ".kt$")
+
+if [ -n "$STAGED_KOTLIN_FILES" ]; then
+    ./gradlew ktlintFormat
+    if [ $? -ne 0 ]; then
+        echo "❌ KtLint formatting failed."
+        echo "   👉 Check console output for details."
+        exit 1
+    fi
+    # Add formatted files back to staging
+    echo "$STAGED_KOTLIN_FILES" | xargs git add
+else
+    echo "ℹ️ No Kotlin files staged. Skipping KtLint."
+fi
+
+# 2. DETEKT
+echo "🔍 Running Detekt..."
+./gradlew detekt
+if [ $? -ne 0 ]; then
+    echo "❌ Detekt found issues."
+    echo "   📄 Report: build/reports/detekt/detekt.html"
+    exit 1
+fi
+
+# 3. CODE COVERAGE VERIFICATION (80% Threshold)
+echo "🧪 Verifying Code Coverage..."
+# Run verification for App/Data (Android) and Domain (JVM)
+./gradlew verifyJacocoCoverage
+if [ $? -ne 0 ]; then
+    echo "❌ Code Coverage verification failed (<80%)."
+    echo "   👉 Please add more tests to cover your changes."
+    echo "   📄 App Report: app/build/reports/jacoco/testDebugUnitTestCoverage/html/index.html"
+    echo "   📄 Doamin Report: domain/build/reports/jacoco/testCoverage/html/index.html"
+    exit 1
+fi
+
+echo "✅ All checks passed!"
+exit 0
