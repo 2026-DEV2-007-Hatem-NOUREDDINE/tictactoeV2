@@ -8,72 +8,71 @@ object JacocoConstants {
     /**
      * Common exclusion patterns for JaCoCo coverage reports.
      */
-    val EXCLUSIONS = listOf(
-        // Android generated
-        "**/R.class",
-        "**/R\$*.class",
-        "**/BuildConfig.*",
-        "**/Manifest*.*",
-        "android/**/*.*",
-
-        // Kotlin/Java internals
-        "**/*\$Lambda\$*.*",
-        "**/*\$inlined\$*.*",
-        "**/Lambda.class",
-        "**/Lambda\$*.class",
-
-        // Test classes
-        "**/*Test*.*",
-        "**/*Tests*.*",
-        "**/*Spec*.*",
-
-        // Hilt/Dagger generated
-        "**/*Hilt*.*",
-        "**/hilt_aggregated_deps/**",
-        "**/*_Factory.class",
-        "**/*_Factory\$*.*",
-        "**/*_MembersInjector.class",
-        "**/*_MembersInjector\$*.*",
-        "**/*Module_*Factory.class",
-        "**/*_ComponentTreeDeps.class",
-        "**/*_HiltModules*.*",
-        "**/Hilt_*.*",
-        "**/*_GeneratedInjector.*",
-
-        // Compose generated
-        "**/*ComposableSingletons*.*",
-        "**/*\$ComposableLambda\$*.*",
-        "**/*Kt\$*.*",
-
-        // Data classes (models/DTOs - optional, uncomment if needed)
-        // "**/data/models/*",
-        // "**/dto/*",
-        // "**/entity/*",
-
-        // Navigation generated
-        "**/navigation/*Args*.*",
-        "**/navigation/*Directions*.*",
-
-        // Room generated
-        "**/*_Impl.class",
-        "**/*_Impl\$*.class",
-
-        // Sealed/Enum classes internals
-        "**/*\$WhenMappings.*",
-        "**/*\$Companion.*",
-
-        // Parcelable
-        "**/*\$Creator.*",
-        "**/*\$Parcel.*",
-    )
+    val EXCLUSIONS =
+        listOf(
+            // Android generated
+            "**/R.class",
+            "**/R\$*.class",
+            "**/BuildConfig.*",
+            "**/Manifest*.*",
+            "android/**/*.*",
+            // Kotlin/Java internals
+            "**/*\$Lambda\$*.*",
+            "**/*\$inlined\$*.*",
+            "**/Lambda.class",
+            "**/Lambda\$*.class",
+            // Test classes
+            "**/*Test*.*",
+            "**/*Tests*.*",
+            "**/*Spec*.*",
+            // Hilt/Dagger generated
+            "**/*Hilt*.*",
+            "**/hilt_aggregated_deps/**",
+            "**/*_Factory.class",
+            "**/*_Factory\$*.*",
+            "**/*_MembersInjector.class",
+            "**/*_MembersInjector\$*.*",
+            "**/*Module_*Factory.class",
+            "**/*_ComponentTreeDeps.class",
+            "**/*_HiltModules*.*",
+            "**/Hilt_*.*",
+            "**/*_GeneratedInjector.*",
+            // Compose generated
+            "**/*ComposableSingletons*.*",
+            "**/*\$ComposableLambda\$*.*",
+            "**/*Kt\$*.*",
+            // UI Composables (require instrumented tests)
+            "**/ui/components/**",
+            "**/ui/theme/**",
+            "**/ui/GameScreen*.*",
+            "**/ui/MainActivity*.*",
+            // Application class
+            "**/*Application.*",
+            "**/*Application\$*.*",
+            // DI modules
+            "**/di/**",
+            // Navigation generated
+            "**/navigation/*Args*.*",
+            "**/navigation/*Directions*.*",
+            // Room generated
+            "**/*_Impl.class",
+            "**/*_Impl\$*.class",
+            // Sealed/Enum classes internals
+            "**/*\$WhenMappings.*",
+            "**/*\$Companion.*",
+            // Parcelable
+            "**/*\$Creator.*",
+            "**/*\$Parcel.*",
+        )
 
     /**
      * Source directories to include in coverage reports.
      */
-    val SOURCE_DIRS = listOf(
-        "src/main/java",
-        "src/main/kotlin",
-    )
+    val SOURCE_DIRS =
+        listOf(
+            "src/main/java",
+            "src/main/kotlin",
+        )
 
     /**
      * Android class directories for debug builds.

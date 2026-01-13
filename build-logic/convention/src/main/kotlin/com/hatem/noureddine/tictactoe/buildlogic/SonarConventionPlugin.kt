@@ -15,16 +15,23 @@ import java.util.Properties
  * - Integration with JaCoCo, Detekt, KtLint, and Android Lint reports
  * - Support for both CI (environment variables) and local (local.properties) configuration
  * - Automatic exclusion of generated code
+ * - Multi-branch support via GitBranchPlugin
  */
 class SonarConventionPlugin : Plugin<Project> {
     override fun apply(target: Project) {
         with(target) {
             pluginManager.apply("org.sonarqube")
+            pluginManager.apply("com.hatem.noureddine.tictactoe.gitBranch")
 
             extensions.configure<SonarExtension> {
                 properties {
                     configureSonarProperties(target)
                 }
+            }
+
+            // Make sonar task depend on detectGitBranch
+            tasks.named("sonar") {
+                dependsOn("detectGitBranch")
             }
         }
     }
@@ -33,7 +40,7 @@ class SonarConventionPlugin : Plugin<Project> {
         val localProperties = loadLocalProperties(target)
 
         // Project identification
-        configureProjectIdentification(localProperties)
+        configureProjectIdentification(target, localProperties)
 
         // Source configuration
         configureSourcePaths(target)
@@ -46,6 +53,37 @@ class SonarConventionPlugin : Plugin<Project> {
 
         // Exclusions
         configureExclusions()
+
+        // Skip subprojects to avoid duplicate indexing
+        skipSubprojects(target)
+    }
+
+    private fun skipSubprojects(target: Project) {
+        target.subprojects.forEach { subproject ->
+            subproject.extensions.findByType(SonarExtension::class.java)?.apply {
+                isSkipProject = true
+            }
+        }
+    }
+
+    /**
+     * Reads the branch name from git.properties file.
+     * Run './gradlew detectGitBranch' first to generate the file.
+     */
+    private fun detectBranchName(target: Project): String? {
+        val propsFile = target.rootProject.file("build/${GitBranchPlugin.PROPERTIES_FILE}")
+        if (propsFile.exists()) {
+            return try {
+                val props = Properties()
+                propsFile.inputStream().use { props.load(it) }
+                props.getProperty(GitBranchPlugin.BRANCH_KEY)?.takeIf {
+                    it.isNotBlank() && it != "unknown"
+                }
+            } catch (e: Exception) {
+                null
+            }
+        }
+        return null
     }
 
     private fun loadLocalProperties(target: Project): Properties {
@@ -57,28 +95,38 @@ class SonarConventionPlugin : Plugin<Project> {
         return properties
     }
 
-    private fun org.sonarqube.gradle.SonarProperties.configureProjectIdentification(localProperties: Properties) {
+    private fun org.sonarqube.gradle.SonarProperties.configureProjectIdentification(
+        target: Project,
+        localProperties: Properties,
+    ) {
+        // Use takeIf to handle empty strings from environment variables
         val projectKey =
-            System.getenv("SONAR_PROJECT_KEY")
-                ?: localProperties.getProperty("sonar.projectKey")
+            System.getenv("SONAR_PROJECT_KEY")?.takeIf { it.isNotBlank() }
+                ?: localProperties.getProperty("sonar.projectKey")?.takeIf { it.isNotBlank() }
                 ?: "2026-DEV2-007-Hatem-NOUREDDINE_tictactoe"
 
         val organization =
-            System.getenv("SONAR_ORGANIZATION_KEY")
-                ?: localProperties.getProperty("sonar.organization")
+            System.getenv("SONAR_ORGANIZATION_KEY")?.takeIf { it.isNotBlank() }
+                ?: localProperties.getProperty("sonar.organization")?.takeIf { it.isNotBlank() }
                 ?: "2026-dev2-007-hatem-noureddine"
 
         val token =
-            System.getenv("SONAR_TOKEN")
-                ?: localProperties.getProperty("sonar.token")
+            System.getenv("SONAR_TOKEN")?.takeIf { it.isNotBlank() }
+                ?: localProperties.getProperty("sonar.token")?.takeIf { it.isNotBlank() }
 
         property("sonar.projectKey", projectKey)
         property("sonar.organization", organization)
         property("sonar.host.url", "https://sonarcloud.io")
         property("sonar.sourceEncoding", "UTF-8")
 
+        // Branch configuration for multi-branch analysis
+        val branchName = detectBranchName(target)
+        if (branchName != null) {
+            property("sonar.branch.name", branchName)
+        }
+
         if (token != null) {
-            property("sonar.login", token)
+            property("sonar.token", token)
         }
 
         // Android variant
@@ -86,31 +134,38 @@ class SonarConventionPlugin : Plugin<Project> {
     }
 
     private fun org.sonarqube.gradle.SonarProperties.configureSourcePaths(target: Project) {
-        val modules =
-            target.subprojects.filter { subproject ->
-                subproject.plugins.hasPlugin("com.android.application") ||
-                    subproject.plugins.hasPlugin("com.android.library") ||
-                    subproject.plugins.hasPlugin("java-library") ||
-                    subproject.plugins.hasPlugin("org.jetbrains.kotlin.jvm")
+        val rootDir = target.rootProject.projectDir
+
+        // Detect modules by checking for src/main/kotlin directories
+        val sourcePaths = mutableListOf<String>()
+        val testPaths = mutableListOf<String>()
+
+        target.subprojects.forEach { module ->
+            val relativePath = module.projectDir.relativeTo(rootDir).path
+            val mainKotlin = File(rootDir, "$relativePath/src/main/kotlin")
+            File(rootDir, "$relativePath/src/main/res")
+            File(rootDir, "$relativePath/src/main/AndroidManifest.xml")
+            val testKotlin = File(rootDir, "$relativePath/src/test/kotlin")
+            val androidTestKotlin = File(rootDir, "$relativePath/src/androidTest/kotlin")
+
+            // Add source paths if they exist - only Kotlin code
+            // Skip res and AndroidManifest to avoid duplicate indexing issues
+            // Android Lint reports will still analyze these files
+            if (mainKotlin.exists()) {
+                sourcePaths.add("$relativePath/src/main/kotlin")
             }
 
-        val sourcePaths =
-            modules.flatMap { module ->
-                listOf(
-                    "${module.projectDir}/src/main/java",
-                    "${module.projectDir}/src/main/kotlin",
-                ).filter { File(it).exists() }
+            // Add test paths if they exist
+            if (testKotlin.exists()) {
+                testPaths.add("$relativePath/src/test/kotlin")
             }
+            if (androidTestKotlin.exists()) {
+                testPaths.add("$relativePath/src/androidTest/kotlin")
+            }
+        }
 
-        val testPaths =
-            modules.flatMap { module ->
-                listOf(
-                    "${module.projectDir}/src/test/java",
-                    "${module.projectDir}/src/test/kotlin",
-                    "${module.projectDir}/src/androidTest/java",
-                    "${module.projectDir}/src/androidTest/kotlin",
-                ).filter { File(it).exists() }
-            }
+        // Set project base directory
+        property("sonar.projectBaseDir", rootDir.absolutePath)
 
         if (sourcePaths.isNotEmpty()) {
             property("sonar.sources", sourcePaths.joinToString(","))
@@ -121,42 +176,52 @@ class SonarConventionPlugin : Plugin<Project> {
     }
 
     private fun org.sonarqube.gradle.SonarProperties.configureExternalAnalyzers(target: Project) {
-        // Detekt
-        val detektReport = "${target.rootProject.layout.buildDirectory.get()}/reports/detekt/detekt.xml"
+        val buildDir =
+            target.rootProject.layout.buildDirectory
+                .get()
+        target.rootProject.projectDir
+
+        // Detekt - use native merged report from DetektConventionPlugin
+        val detektReport = "$buildDir/reports/detekt/detekt.xml"
         property("sonar.kotlin.detekt.reportPaths", detektReport)
 
-        // Android Lint (dynamic discovery)
+        // Android Lint - discover reports by file existence
         val lintReports =
-            target.subprojects
-                .filter { it.plugins.hasPlugin("com.android.application") || it.plugins.hasPlugin("com.android.library") }
-                .map { "${it.projectDir}/build/reports/lint-results-debug.xml" }
-                .filter { File(it).exists() } // Include even if not yet generated
+            target.subprojects.mapNotNull { module ->
+                val reportPath = "${module.projectDir}/build/reports/lint-results-debug.xml"
+                if (File(reportPath).exists()) reportPath else null
+            }
 
         if (lintReports.isNotEmpty()) {
             property("sonar.androidLint.reportPaths", lintReports.joinToString(","))
         }
 
-        // KtLint (dynamic discovery)
+        // KtLint - discover reports by file existence
         val ktlintReports =
             target.subprojects.flatMap { module ->
-                val ktlintDir = "${module.projectDir}/build/reports/ktlint"
-                listOf(
-                    "$ktlintDir/ktlintMainSourceSetCheck/ktlintMainSourceSetCheck.xml",
-                    "$ktlintDir/ktlintTestSourceSetCheck/ktlintTestSourceSetCheck.xml",
-                )
+                val ktlintDir = File("${module.projectDir}/build/reports/ktlint")
+                if (ktlintDir.exists()) {
+                    ktlintDir
+                        .walkTopDown()
+                        .filter { it.isFile && it.name.endsWith(".xml") && it.name.contains("Check") }
+                        .map { it.absolutePath }
+                        .toList()
+                } else {
+                    emptyList()
+                }
             }
 
         if (ktlintReports.isNotEmpty()) {
             property("sonar.kotlin.ktlint.reportPaths", ktlintReports.joinToString(","))
         }
 
-        // JUnit test reports (dynamic discovery)
+        // JUnit test reports - discover by file existence
         val testReports =
             target.subprojects.flatMap { module ->
                 listOf(
                     "${module.projectDir}/build/test-results/testDebugUnitTest",
                     "${module.projectDir}/build/test-results/test",
-                )
+                ).filter { File(it).exists() }
             }
 
         if (testReports.isNotEmpty()) {
@@ -171,7 +236,7 @@ class SonarConventionPlugin : Plugin<Project> {
     }
 
     private fun org.sonarqube.gradle.SonarProperties.configureExclusions() {
-        // Exclude generated code from analysis
+        // Exclude generated code and binary files from analysis
         val exclusions =
             listOf(
                 "**/R.java",
@@ -187,11 +252,31 @@ class SonarConventionPlugin : Plugin<Project> {
                 "**/*_Impl.java",
                 "**/databinding/**",
                 "**/generated/**",
+                // Binary files
+                "**/*.webp",
+                "**/*.png",
+                "**/*.jpg",
+                "**/*.jpeg",
+                "**/*.gif",
+                // Mipmap directories (icons)
+                "**/mipmap-*/**",
             )
 
         property("sonar.exclusions", exclusions.joinToString(","))
 
-        // Exclude test classes from coverage calculation
-        property("sonar.coverage.exclusions", "**/test/**,**/androidTest/**")
+        // Exclude UI and generated code from coverage calculation
+        // These require instrumented tests which are not included in JaCoCo
+        val coverageExclusions =
+            listOf(
+                "**/test/**",
+                "**/androidTest/**",
+                "**/ui/components/**",
+                "**/ui/theme/**",
+                "**/ui/GameScreen*",
+                "**/ui/MainActivity*",
+                "**/*Application*",
+                "**/di/**",
+            )
+        property("sonar.coverage.exclusions", coverageExclusions.joinToString(","))
     }
 }

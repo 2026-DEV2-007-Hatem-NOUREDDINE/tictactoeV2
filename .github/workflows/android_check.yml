@@ -1,11 +1,38 @@
-name: Android CI
+# =============================================================================
+# 🤖 Android CI Pipeline
+# =============================================================================
+# Comprehensive CI workflow for Android project quality assurance
+#
+# Jobs:
+#   - 🏗️ Build: Compile debug APK and cache artifacts
+#   - 🔍 Lint: Detekt, KtLint, Android Lint static analysis
+#   - 🧪 Test: Unit tests with JaCoCo coverage
+#   - 📸 Screenshot: Roborazzi visual regression tests
+#   - 📱 Instrumentation: Emulator-based UI tests
+#   - 🔎 SonarCloud: Code quality analysis
+# =============================================================================
+
+name: 🤖 Android CI
 
 on:
     push:
         branches: [ "main" ]
+        paths-ignore:
+            - '**.md'
+            - 'LICENSE'
+            - '.gitignore'
     pull_request:
         types: [ opened, synchronize, reopened ]
         branches: [ "main" ]
+
+# Required permissions for PR comments, checks, and Pages deployment
+permissions:
+    contents: read
+    pull-requests: write
+    checks: write
+    issues: write
+    pages: write
+    id-token: write
 
 concurrency:
     group: ${{ github.workflow }}-${{ github.ref }}
@@ -14,7 +41,8 @@ concurrency:
 env:
     JAVA_VERSION: "21"
     JAVA_DISTRIBUTION: "temurin"
-    GRADLE_OPTS: "-Dorg.gradle.caching=true"
+    GRADLE_OPTS: "-Dorg.gradle.caching=true -Dorg.gradle.parallel=true"
+    ANDROID_EMULATOR_WAIT_TIME_BEFORE_KILL: 60
 
 jobs:
     # =========================================================================
@@ -23,6 +51,7 @@ jobs:
     build:
         name: 🏗️ Build
         runs-on: ubuntu-latest
+        timeout-minutes: 15
         outputs:
             build-status: ${{ steps.build.outcome }}
         steps:
@@ -56,7 +85,7 @@ jobs:
                 run: |
                     echo "# 🏗️ Build Report" >> $GITHUB_STEP_SUMMARY
                     echo "" >> $GITHUB_STEP_SUMMARY
-                    
+
                     # Status badge
                     if [ "${{ steps.build.outcome }}" == "success" ]; then
                         echo "> ✅ **Build completed successfully**" >> $GITHUB_STEP_SUMMARY
@@ -64,13 +93,13 @@ jobs:
                         echo "> ❌ **Build failed**" >> $GITHUB_STEP_SUMMARY
                     fi
                     echo "" >> $GITHUB_STEP_SUMMARY
-                    
+
                     # Build info table
                     echo "## 📦 Artifacts" >> $GITHUB_STEP_SUMMARY
                     echo "" >> $GITHUB_STEP_SUMMARY
                     echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
                     echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-                    
+
                     # APK info
                     APK_FILE=$(find app/build/outputs/apk/debug -name "*.apk" -type f 2>/dev/null | head -1)
                     if [ -f "$APK_FILE" ]; then
@@ -79,11 +108,11 @@ jobs:
                         echo "| APK | \`$APK_NAME\` |" >> $GITHUB_STEP_SUMMARY
                         echo "| Size | **$APK_SIZE** |" >> $GITHUB_STEP_SUMMARY
                     fi
-                    
+
                     echo "| Java | ${{ env.JAVA_VERSION }} (${{ env.JAVA_DISTRIBUTION }}) |" >> $GITHUB_STEP_SUMMARY
                     echo "| Gradle | $(./gradlew --version 2>/dev/null | grep 'Gradle' | head -1 | awk '{print $2}') |" >> $GITHUB_STEP_SUMMARY
                     echo "" >> $GITHUB_STEP_SUMMARY
-                    
+
                     # Environment
                     echo "<details>" >> $GITHUB_STEP_SUMMARY
                     echo "<summary>🔧 Build Environment</summary>" >> $GITHUB_STEP_SUMMARY
@@ -111,6 +140,7 @@ jobs:
     lint:
         name: 🔍 Lint & Static Analysis
         runs-on: ubuntu-latest
+        timeout-minutes: 20
         needs: build
         steps:
             -   name: 📥 Checkout code
@@ -154,24 +184,25 @@ jobs:
                     echo "::endgroup::"
                     echo "✅ Android Lint passed!"
 
+
             -   name: 📊 Lint Summary
                 if: always()
                 run: |
                     echo "# 🔍 Static Analysis Report" >> $GITHUB_STEP_SUMMARY
                     echo "" >> $GITHUB_STEP_SUMMARY
-                    
+
                     # Overall status
                     DETEKT_STATUS="${{ steps.detekt.outcome }}"
                     KTLINT_STATUS="${{ steps.ktlint.outcome }}"
                     LINT_STATUS="${{ steps.lint.outcome }}"
-                    
+
                     if [ "$DETEKT_STATUS" == "success" ] && [ "$KTLINT_STATUS" == "success" ] && [ "$LINT_STATUS" == "success" ]; then
                         echo "> ✅ **All static analysis checks passed**" >> $GITHUB_STEP_SUMMARY
                     else
                         echo "> ⚠️ **Some checks failed - review required**" >> $GITHUB_STEP_SUMMARY
                     fi
                     echo "" >> $GITHUB_STEP_SUMMARY
-                    
+
                     # Results table
                     echo "## 📋 Results" >> $GITHUB_STEP_SUMMARY
                     echo "" >> $GITHUB_STEP_SUMMARY
@@ -181,18 +212,18 @@ jobs:
                     echo "| 📝 KtLint | ${{ steps.ktlint.outcome == 'success' && '✅ Passed' || '❌ Failed' }} | Kotlin code style |" >> $GITHUB_STEP_SUMMARY
                     echo "| 📱 Android Lint | ${{ steps.lint.outcome == 'success' && '✅ Passed' || '❌ Failed' }} | Android best practices |" >> $GITHUB_STEP_SUMMARY
                     echo "" >> $GITHUB_STEP_SUMMARY
-                    
+
                     # Issue Statistics
                     echo "<details>" >> $GITHUB_STEP_SUMMARY
                     echo "<summary>📊 Issue Statistics</summary>" >> $GITHUB_STEP_SUMMARY
                     echo "" >> $GITHUB_STEP_SUMMARY
-                    
+
                     DETEKT_REPORT=$(find . -path "*/build/reports/detekt/detekt.xml" -type f 2>/dev/null | head -1)
                     if [ -f "$DETEKT_REPORT" ]; then
                         DETEKT_ISSUES=$(grep -c '<error' "$DETEKT_REPORT" 2>/dev/null || echo 0)
                         echo "- **Detekt**: $DETEKT_ISSUES issue(s)" >> $GITHUB_STEP_SUMMARY
                     fi
-                    
+
                     # Android Lint issues
                     LINT_REPORT=$(find . -path "*/build/reports/lint-results-debug.xml" -type f 2>/dev/null | head -1)
                     if [ -f "$LINT_REPORT" ]; then
@@ -200,24 +231,22 @@ jobs:
                         LINT_WARNINGS=$(grep -c 'severity="Warning"' "$LINT_REPORT" 2>/dev/null || echo 0)
                         echo "- **Android Lint**: $LINT_ERRORS error(s), $LINT_WARNINGS warning(s)" >> $GITHUB_STEP_SUMMARY
                     fi
-                    
+
                     echo "" >> $GITHUB_STEP_SUMMARY
                     echo "</details>" >> $GITHUB_STEP_SUMMARY
                     echo "" >> $GITHUB_STEP_SUMMARY
-                    
+
                     # HTML Reports section with links
                     echo "## 📄 HTML Reports" >> $GITHUB_STEP_SUMMARY
                     echo "" >> $GITHUB_STEP_SUMMARY
-                    echo "Download the **lint-reports** artifact to view detailed HTML reports:" >> $GITHUB_STEP_SUMMARY
+                    echo "Download the **lint-reports** artifact to view detailed reports:" >> $GITHUB_STEP_SUMMARY
                     echo "" >> $GITHUB_STEP_SUMMARY
                     echo "| Report | Path in Artifact |" >> $GITHUB_STEP_SUMMARY
                     echo "|--------|------------------|" >> $GITHUB_STEP_SUMMARY
-                    echo "| 🔎 Detekt | \`build/reports/detekt/detekt.html\` |" >> $GITHUB_STEP_SUMMARY
-                    echo "| 📝 KtLint | \`app/build/reports/ktlint/ktlintMainSourceSetCheck.html\` |" >> $GITHUB_STEP_SUMMARY
-                    echo "| 📱 Android Lint | \`app/build/reports/lint-results-debug.html\` |" >> $GITHUB_STEP_SUMMARY
+                    echo "| 🔎 Detekt | \`*/build/reports/detekt/detekt.html\` |" >> $GITHUB_STEP_SUMMARY
+                    echo "| 📝 KtLint | \`*/build/reports/ktlint/*/\*.html\` |" >> $GITHUB_STEP_SUMMARY
+                    echo "| 📱 Android Lint | \`*/build/reports/lint-results-debug.html\` |" >> $GITHUB_STEP_SUMMARY
                     echo "" >> $GITHUB_STEP_SUMMARY
-                    
-                    echo "> 💡 **Tip**: Extract the artifact and open the HTML files in your browser for detailed analysis." >> $GITHUB_STEP_SUMMARY
 
             -   name: 📤 Upload Lint Reports
                 if: always()
@@ -237,6 +266,7 @@ jobs:
     test:
         name: 🧪 Unit Tests & Instrumentation Tests
         runs-on: ubuntu-latest
+        timeout-minutes: 30
         needs: build
         steps:
             -   name: 📥 Checkout code
@@ -249,9 +279,7 @@ jobs:
                     distribution: ${{ env.JAVA_DISTRIBUTION }}
 
             -   name: Setup Android SDK
-                uses: android-actions/setup-android@v3  # Accept automatically licences [page:2]
-                with:
-                    cache-read-only: true
+                uses: android-actions/setup-android@v3  # Accept automatically licences
 
             -   name: Accept licenses (fallback)
                 run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses
@@ -327,7 +355,7 @@ jobs:
                     echo "" >> $GITHUB_STEP_SUMMARY
                     echo "| Status | Count | Percentage |" >> $GITHUB_STEP_SUMMARY
                     echo "|--------|-------|------------|" >> $GITHUB_STEP_SUMMARY
-                    
+
                     if [ "$TOTAL_TESTS" -gt 0 ]; then
                         PASS_PCT=$((PASSED_TESTS * 100 / TOTAL_TESTS))
                         FAIL_PCT=$((FAILED_TESTS * 100 / TOTAL_TESTS))
@@ -394,7 +422,7 @@ jobs:
                         else
                           COLOR="🔴"
                         fi
-                        
+
                         BAR=$(printf '█%.0s' $(seq 1 $FILLED 2>/dev/null) || echo "")$(printf '░%.0s' $(seq 1 $EMPTY 2>/dev/null) || echo "")
                         echo "**Line Coverage:** $BAR **$LINE_PCT%** $COLOR" >> $GITHUB_STEP_SUMMARY
                         echo "" >> $GITHUB_STEP_SUMMARY
@@ -433,7 +461,7 @@ jobs:
                     echo "" >> $GITHUB_STEP_SUMMARY
                     echo "</details>" >> $GITHUB_STEP_SUMMARY
                     echo "" >> $GITHUB_STEP_SUMMARY
-                    
+
                     echo "> 💡 Download the **test-reports** artifact for detailed HTML reports." >> $GITHUB_STEP_SUMMARY
 
             -   name: 📤 Upload Test Reports
@@ -442,6 +470,7 @@ jobs:
                 with:
                     name: test-reports
                     path: |
+                        build/reports/jacoco/
                         **/build/reports/tests/
                         **/build/reports/androidTests/
                         **/build/reports/jacoco/
@@ -464,6 +493,7 @@ jobs:
     screenshot:
         name: 📸 Screenshot Tests
         runs-on: ubuntu-latest
+        timeout-minutes: 15
         needs: build
         steps:
             -   name: 📥 Checkout code
@@ -538,23 +568,23 @@ jobs:
                         echo "" >> $GITHUB_STEP_SUMMARY
                         echo "The following screenshots have visual differences:" >> $GITHUB_STEP_SUMMARY
                         echo "" >> $GITHUB_STEP_SUMMARY
-                        
+
                         # Create a directory for comparison images to be uploaded
                         mkdir -p comparison-images
-                        
+
                         # Display each comparison image
                         COUNTER=0
                         find "$DIFF_DIR" -name "*_compare.png" -type f 2>/dev/null | head -10 | while read f; do
                             COUNTER=$((COUNTER + 1))
                             name=$(basename "$f" | sed 's/_compare\.png$//')
-                            
+
                             # Copy to comparison-images directory
                             cp "$f" "comparison-images/"
-                            
+
                             # Also copy actual and expected if they exist
                             actual_file="$DIFF_DIR/${name}_actual.png"
                             expected_file="$SNAPSHOT_DIR/${name}.png"
-                            
+
                             echo "### $COUNTER. \`$name\`" >> $GITHUB_STEP_SUMMARY
                             echo "" >> $GITHUB_STEP_SUMMARY
                             echo "<details open>" >> $GITHUB_STEP_SUMMARY
@@ -569,12 +599,12 @@ jobs:
                             echo "</details>" >> $GITHUB_STEP_SUMMARY
                             echo "" >> $GITHUB_STEP_SUMMARY
                         done
-                        
+
                         if [ "$DIFF_COUNT" -gt 10 ]; then
                             echo "> 📌 Showing first 10 of $DIFF_COUNT differences. Download artifact for all." >> $GITHUB_STEP_SUMMARY
                             echo "" >> $GITHUB_STEP_SUMMARY
                         fi
-                        
+
                         echo "> 💡 **How to review:**" >> $GITHUB_STEP_SUMMARY
                         echo "> 1. Download the \`screenshot-report\` artifact" >> $GITHUB_STEP_SUMMARY
                         echo "> 2. Open \`index.html\` in your browser" >> $GITHUB_STEP_SUMMARY
@@ -689,6 +719,7 @@ jobs:
     sonar:
         name: 🔎 SonarCloud Analysis
         runs-on: ubuntu-latest
+        timeout-minutes: 15
         needs: [ lint, test ]
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         steps:
@@ -729,11 +760,15 @@ jobs:
                 env:
                     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
                     SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-                    SONAR_PROJECT_KEY: ${{ secrets.SONAR_PROJECT_KEY }}
-                    SONAR_ORGANIZATION_KEY: ${{ secrets.SONAR_ORGANIZATION_KEY }}
+                    SONAR_PROJECT_KEY: ${{ vars.SONAR_PROJECT_KEY }}
+                    SONAR_ORGANIZATION_KEY: ${{ vars.SONAR_ORGANIZATION_KEY }}
                 run: |
                     echo "::group::Running SonarCloud Analysis"
-                    ./gradlew assembleDebug sonar --info --build-cache
+                    # sonar task automatically:
+                    # 1. Runs detectGitBranch (detects branch from git)
+                    # 2. Merges Detekt reports
+                    # 3. Reads coverage/lint reports from downloaded artifacts
+                    ./gradlew detektReportMergeXml sonar --info --build-cache
                     echo "::endgroup::"
                     echo "✅ SonarCloud analysis complete!"
                 continue-on-error: true
@@ -743,7 +778,7 @@ jobs:
                 run: |
                     echo "# 🔎 SonarCloud Analysis Report" >> $GITHUB_STEP_SUMMARY
                     echo "" >> $GITHUB_STEP_SUMMARY
-                    
+
                     # Status
                     if [ "${{ steps.sonar.outcome }}" == "success" ]; then
                         echo "> ✅ **Analysis completed successfully**" >> $GITHUB_STEP_SUMMARY
@@ -751,7 +786,7 @@ jobs:
                         echo "> ⚠️ **Analysis skipped or failed**" >> $GITHUB_STEP_SUMMARY
                     fi
                     echo "" >> $GITHUB_STEP_SUMMARY
-                    
+
                     # Analysis details
                     echo "## 📋 Analysis Details" >> $GITHUB_STEP_SUMMARY
                     echo "" >> $GITHUB_STEP_SUMMARY
@@ -761,7 +796,7 @@ jobs:
                     echo "| Branch | \`${{ github.ref_name }}\` |" >> $GITHUB_STEP_SUMMARY
                     echo "| Commit | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY
                     echo "" >> $GITHUB_STEP_SUMMARY
-                    
+
                     # Reports included
                     echo "## 📁 Reports Included" >> $GITHUB_STEP_SUMMARY
                     echo "" >> $GITHUB_STEP_SUMMARY
@@ -772,13 +807,144 @@ jobs:
                     echo "| 📝 Style | KtLint |" >> $GITHUB_STEP_SUMMARY
                     echo "| 📱 Android | Android Lint |" >> $GITHUB_STEP_SUMMARY
                     echo "" >> $GITHUB_STEP_SUMMARY
-                    
+
                     # Quick links
                     echo "## 🔗 Quick Links" >> $GITHUB_STEP_SUMMARY
                     echo "" >> $GITHUB_STEP_SUMMARY
                     echo "| Link | Description |" >> $GITHUB_STEP_SUMMARY
                     echo "|------|-------------|" >> $GITHUB_STEP_SUMMARY
-                    echo "| [📊 Dashboard](https://sonarcloud.io/dashboard?id=${{ secrets.SONAR_PROJECT_KEY }}) | Project overview |" >> $GITHUB_STEP_SUMMARY
-                    echo "| [🐛 Issues](https://sonarcloud.io/project/issues?id=${{ secrets.SONAR_PROJECT_KEY }}) | All issues |" >> $GITHUB_STEP_SUMMARY
-                    echo "| [🔒 Security](https://sonarcloud.io/project/security_hotspots?id=${{ secrets.SONAR_PROJECT_KEY }}) | Security hotspots |" >> $GITHUB_STEP_SUMMARY
-                    echo "| [📈 Coverage](https://sonarcloud.io/component_measures?id=${{ secrets.SONAR_PROJECT_KEY }}&metric=coverage) | Coverage details |" >> $GITHUB_STEP_SUMMARY
+                    echo "| [📊 Dashboard](https://sonarcloud.io/dashboard?id=${{ vars.SONAR_PROJECT_KEY }}) | Project overview |" >> $GITHUB_STEP_SUMMARY
+                    echo "| [🐛 Issues](https://sonarcloud.io/project/issues?id=${{ vars.SONAR_PROJECT_KEY }}) | All issues |" >> $GITHUB_STEP_SUMMARY
+                    echo "| [🔒 Security](https://sonarcloud.io/project/security_hotspots?id=${{ vars.SONAR_PROJECT_KEY }}) | Security hotspots |" >> $GITHUB_STEP_SUMMARY
+                    echo "| [📈 Coverage](https://sonarcloud.io/component_measures?id=${{ vars.SONAR_PROJECT_KEY }}&metric=coverage) | Coverage details |" >> $GITHUB_STEP_SUMMARY
+
+    # =========================================================================
+    # Deploy Reports Job - Publishes HTML reports to GitHub Pages
+    # =========================================================================
+    deploy-reports:
+        name: 📄 Deploy Reports to Pages
+        needs: [ lint, test ]
+        if: always() && github.ref == 'refs/heads/main'
+        runs-on: ubuntu-latest
+        environment:
+            name: github-pages
+            url: ${{ steps.deployment.outputs.page_url }}
+        steps:
+            -   name: 📥 Checkout code
+                uses: actions/checkout@v4
+
+            -   name: 📥 Download Lint Reports
+                uses: actions/download-artifact@v4
+                with:
+                    name: lint-reports
+                    path: reports/lint
+
+            -   name: 📥 Download Test Reports
+                uses: actions/download-artifact@v4
+                with:
+                    name: test-reports
+                    path: reports/tests
+
+            -   name: 📁 Prepare Reports Site
+                run: |
+                    mkdir -p _site
+
+                    # Create index.html
+                    cat > _site/index.html << 'EOF'
+                    <!DOCTYPE html>
+                    <html lang="en">
+                    <head>
+                        <meta charset="UTF-8">
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                        <title>Tic Tac Toe - CI Reports</title>
+                        <style>
+                            :root { --primary: #6366f1; --bg: #0f172a; --card: #1e293b; --text: #f8fafc; }
+                            * { box-sizing: border-box; margin: 0; padding: 0; }
+                            body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 2rem; }
+                            .container { max-width: 900px; margin: 0 auto; }
+                            h1 { font-size: 2rem; margin-bottom: 0.5rem; }
+                            .subtitle { color: #94a3b8; margin-bottom: 2rem; }
+                            .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem; }
+                            .card { background: var(--card); border-radius: 12px; padding: 1.5rem; transition: transform 0.2s; }
+                            .card:hover { transform: translateY(-4px); }
+                            .card h3 { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
+                            .card p { color: #94a3b8; font-size: 0.9rem; margin-bottom: 1rem; }
+                            .card a { display: inline-block; background: var(--primary); color: white; padding: 0.5rem 1rem; border-radius: 6px; text-decoration: none; font-weight: 500; }
+                            .card a:hover { filter: brightness(1.1); }
+                            .badge { font-size: 1.5rem; }
+                            footer { margin-top: 3rem; text-align: center; color: #64748b; font-size: 0.85rem; }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="container">
+                            <h1>🎮 Tic Tac Toe - CI Reports</h1>
+                            <p class="subtitle">Generated on $(date -u +"%Y-%m-%d %H:%M:%S UTC")</p>
+
+                            <div class="grid">
+                                <div class="card">
+                                    <h3><span class="badge">📊</span> JaCoCo Coverage</h3>
+                                    <p>Code coverage report for all modules</p>
+                                    <a href="tests/build/reports/jacoco/jacocoTestReport/html/index.html">View Report</a>
+                                </div>
+
+                                <div class="card">
+                                    <h3><span class="badge">🔎</span> Detekt Analysis</h3>
+                                    <p>Static code analysis for Kotlin</p>
+                                    <a href="lint/build/reports/detekt/detekt.html">View Report</a>
+                                </div>
+
+                                <div class="card">
+                                    <h3><span class="badge">📝</span> KtLint Report</h3>
+                                    <p>Kotlin code style checks</p>
+                                    <a href="lint/app/build/reports/ktlint/ktlintMainSourceSetCheck.html">View Report</a>
+                                </div>
+
+                                <div class="card">
+                                    <h3><span class="badge">📱</span> Android Lint</h3>
+                                    <p>Android-specific best practices</p>
+                                    <a href="lint/app/build/reports/lint-results-debug.html">View Report</a>
+                                </div>
+
+                                <div class="card">
+                                    <h3><span class="badge">🧪</span> Unit Tests</h3>
+                                    <p>Unit test results for all modules</p>
+                                    <a href="tests/domain/build/reports/tests/test/index.html">Domain Tests</a>
+                                </div>
+                            </div>
+
+                            <footer>
+                                <p>🚀 Powered by GitHub Actions | 📦 Commit: ${{ github.sha }}</p>
+                            </footer>
+                        </div>
+                    </body>
+                    </html>
+                    EOF
+
+                    # Copy reports to site
+                    cp -r reports/lint/* _site/lint/ 2>/dev/null || mkdir -p _site/lint
+                    cp -r reports/tests/* _site/tests/ 2>/dev/null || mkdir -p _site/tests
+
+            -   name: 📤 Upload Pages Artifact
+                uses: actions/upload-pages-artifact@v3
+                with:
+                    path: _site
+
+            -   name: 🚀 Deploy to GitHub Pages
+                id: deployment
+                uses: actions/deploy-pages@v4
+
+            -   name: 📊 Pages Deployment Summary
+                run: |
+                    PAGES_URL="${{ steps.deployment.outputs.page_url }}"
+                    echo "# 📄 Reports Deployed to GitHub Pages" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    echo "> ✅ Reports are now available at: **$PAGES_URL**" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    echo "## 🔗 Direct Links" >> $GITHUB_STEP_SUMMARY
+                    echo "" >> $GITHUB_STEP_SUMMARY
+                    echo "| Report | Link |" >> $GITHUB_STEP_SUMMARY
+                    echo "|--------|------|" >> $GITHUB_STEP_SUMMARY
+                    echo "| 📊 Coverage | [JaCoCo Report](${PAGES_URL}tests/build/reports/jacoco/jacocoTestReport/html/index.html) |" >> $GITHUB_STEP_SUMMARY
+                    echo "| 🔎 Detekt | [Detekt Report](${PAGES_URL}lint/build/reports/detekt/detekt.html) |" >> $GITHUB_STEP_SUMMARY
+                    echo "| 📝 KtLint | [KtLint Report](${PAGES_URL}lint/app/build/reports/ktlint/ktlintMainSourceSetCheck.html) |" >> $GITHUB_STEP_SUMMARY
+                    echo "| 📱 Android Lint | [Lint Report](${PAGES_URL}lint/app/build/reports/lint-results-debug.html) |" >> $GITHUB_STEP_SUMMARY
