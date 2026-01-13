@@ -35,6 +35,7 @@ echo "🧪 Verifying Code Coverage..."
 # Run verification for App/Data (Android) and Domain (JVM)
 ./gradlew verifyJacocoCoverage
 if [ $? -ne 0 ]; then
+
     echo "❌ Code Coverage verification failed (<80%)."
     echo "   👉 Please add more tests to cover your changes."
     echo "   📄 App Report: app/build/reports/jacoco/testDebugUnitTestCoverage/html/index.html"
