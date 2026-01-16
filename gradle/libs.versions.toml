@@ -4,7 +4,7 @@ agp = "8.13.2"
 androidxTestCore = "1.7.0"
 assertj = "3.27.6"
 compileSdk = "36"
-composeBom = "2025.12.01"
+composeBom = "2026.01.00"
 coreKtx = "1.17.0"
 coroutinesTest = "1.10.2"
 detekt = "1.23.8"
@@ -27,7 +27,7 @@ robolectric = "4.16"
 sonarqube = "7.2.2.6593"
 targetSdk = "36"
 roborazzi = "1.56.0"
-junitVintage = "5.10.0"
+junitVintage = "6.0.2"
 jacoco = "0.8.14"
 
 [libraries]
@@ -112,4 +112,4 @@ sonarqube = { id = "org.sonarqube", version.ref = "sonarqube" }
 roborazzi = { id = "io.github.takahirom.roborazzi", version.ref = "roborazzi" }
 internal-sonarqube = { id = "com.hatem.noureddine.tictactoe.sonarqube", version = "unspecified" }
 internal-jacoco = { id = "com.hatem.noureddine.tictactoe.jacoco.report", version = "unspecified" }
-
+internal-detekt = { id = "com.hatem.noureddine.tictactoe.detekt", version = "unspecified" }

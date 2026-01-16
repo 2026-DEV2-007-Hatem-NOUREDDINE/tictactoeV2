@@ -69,5 +69,9 @@ gradlePlugin {
             id = "com.hatem.noureddine.tictactoe.jacoco.report"
             implementationClass = "com.hatem.noureddine.tictactoe.buildlogic.JacocoReportConventionPlugin"
         }
+        register("gitBranch") {
+            id = "com.hatem.noureddine.tictactoe.gitBranch"
+            implementationClass = "com.hatem.noureddine.tictactoe.buildlogic.GitBranchPlugin"
+        }
     }
 }
